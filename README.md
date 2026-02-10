@@ -431,6 +431,88 @@ Computed on-demand from Tier 1 + 2. Cloud Monitoring computes these natively fro
 | `AsyncSession.send_tool_response()` | Tool round-trip time, message count |
 | `AsyncLive.connect()` | Session lifecycle, setup latency, active sessions |
 
+## Pipecat Integration
+
+This package works with [Pipecat](https://github.com/pipecat-ai/pipecat), the open-source framework for building voice and multimodal AI pipelines.
+
+### Why It Works
+
+Pipecat's Gemini Live service (`pipecat.services.google.gemini_live`) uses the `google-genai` SDK internally — it imports `google.genai.live.AsyncSession` directly and calls `client.aio.live.connect()`, `session.send_realtime_input()`, `session.send_client_content()`, `session.send_tool_response()`, and `session.receive()` for all communication with the Gemini Live API. Since `gemini-live-telemetry` instruments these exact SDK methods at the module level via `wrapt`, all of Pipecat's Gemini Live API traffic is captured automatically without any changes to Pipecat's code or your pipeline configuration.
+
+### Step-by-Step Setup
+
+**1. Install both packages:**
+
+```bash
+pip install pipecat-ai[google] gemini-live-telemetry
+```
+
+**2. Activate telemetry before creating your pipeline:**
+
+```python
+# app.py
+from gemini_live_telemetry import activate, InstrumentationConfig
+
+# Activate BEFORE any Pipecat imports that use the Gemini Live API
+activate(InstrumentationConfig(
+    project_id="your-gcp-project-id",
+))
+
+# Now use Pipecat normally
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineTask
+from pipecat.transports.services.daily import DailyTransport
+
+# Build your pipeline as usual
+llm = GeminiLiveLLMService(
+    api_key="your-api-key",
+    model="gemini-2.0-flash-live-001",
+    # ... your config
+)
+
+pipeline = Pipeline([transport.input(), llm, transport.output()])
+task = PipelineTask(pipeline)
+runner = PipelineRunner()
+await runner.run(task)
+
+# All Gemini Live API metrics are collected automatically:
+# - TTFB, turn duration, token counts, audio bytes, tool round-trips
+# - Exported to Cloud Monitoring dashboard + local JSON file
+```
+
+**3. View metrics:**
+
+- **Cloud Console:** Monitoring > Dashboards > "Gemini Live API Metrics"
+- **Local JSON:** `./metrics/metrics_<timestamp>.json`
+- **In-code:**
+  ```python
+  from gemini_live_telemetry import get_metrics_store
+  store = get_metrics_store()
+  for s in store.list_sessions():
+      print(f"{s.session_id}: {s.total_turns} turns, {s.avg_ttfb_ms}ms TTFB")
+  ```
+
+### Pipecat + Vertex AI
+
+For Pipecat with Vertex AI (instead of API key), use `GeminiLiveVertexLLMService`:
+
+```python
+activate(InstrumentationConfig(
+    project_id="your-gcp-project-id",
+))
+
+from pipecat.services.google.gemini_live.llm_vertex import GeminiLiveVertexLLMService
+
+llm = GeminiLiveVertexLLMService(
+    project_id="your-gcp-project-id",
+    region="us-central1",
+    model="gemini-2.0-flash-live-001",
+)
+# Works identically — same SDK methods, same telemetry
+```
+
 ## Requirements
 
 - Python >= 3.10
