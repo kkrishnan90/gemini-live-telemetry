@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gemini-live-telemetry"
-version = "0.1.0"
+version = "0.1.1"
 description = "Instrumentation and telemetry for the Google Gemini Live API via OpenTelemetry"
 readme = "README.md"
 license = "Apache-2.0"

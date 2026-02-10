@@ -31,7 +31,7 @@ Application-side logging (for accuracy comparison):
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Type-only import to avoid circular deps; actual classes resolved at runtime
 from typing import TYPE_CHECKING
