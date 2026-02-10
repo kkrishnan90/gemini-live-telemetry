@@ -19,11 +19,13 @@ Non-intrusive instrumentation for the [Google Gemini Live API](https://cloud.goo
 
 ### Installation
 
+[![PyPI version](https://badge.fury.io/py/gemini-live-telemetry.svg)](https://pypi.org/project/gemini-live-telemetry/)
+
 ```bash
 pip install gemini-live-telemetry
 ```
 
-Or with uv:
+Or with [uv](https://docs.astral.sh/uv/):
 ```bash
 uv add gemini-live-telemetry
 ```
