@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
-    { name = "AjnaLens" },
+    { name = "kkrishnan90" },
 ]
 keywords = [
     "gemini", "google", "genai", "live-api", "telemetry",
@@ -45,10 +45,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/AjnaLens/gemini-live-telemetry"
-Repository = "https://github.com/AjnaLens/gemini-live-telemetry"
-Issues = "https://github.com/AjnaLens/gemini-live-telemetry/issues"
-Documentation = "https://github.com/AjnaLens/gemini-live-telemetry#readme"
+Homepage = "https://github.com/kkrishnan90/gemini-live-telemetry"
+Repository = "https://github.com/kkrishnan90/gemini-live-telemetry"
+Issues = "https://github.com/kkrishnan90/gemini-live-telemetry/issues"
+Documentation = "https://github.com/kkrishnan90/gemini-live-telemetry#readme"
 
 [project.scripts]
 gemini-live-compare = "gemini_live_telemetry.compare:main"
