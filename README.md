@@ -148,29 +148,46 @@ for turn in session["turns"]:
 
 ## Cloud Dashboard
 
-The package auto-creates a dashboard in Google Cloud Console with:
+When `enable_gcp_export=True` (the default), the package auto-creates a custom dashboard named **"Gemini Live API Metrics"** in your Google Cloud project.
 
-**Row 1 — Scorecards:**
-- Avg TTFB (with 500ms/1000ms thresholds)
-- Total Turns
-- Total Tokens
-- Interrupted Turns
-- Active Sessions
-- Avg Setup Latency
+### How to Find the Dashboard
 
-**Row 2 — Time Series Charts:**
-- TTFB Over Time (line chart, grouped by session_id)
-- Tokens per Turn — Prompt vs Response (stacked bar)
+1. Open [Google Cloud Console](https://console.cloud.google.com)
+2. Select your project (the `project_id` you configured)
+3. Navigate to **Monitoring** > **Dashboards** (left sidebar)
+4. Look for **"Gemini Live API Metrics"** under **Custom Dashboards**
+5. Or go directly: `https://console.cloud.google.com/monitoring/dashboards?project=YOUR_PROJECT_ID`
 
-**Row 3 — Tool & Audio Charts:**
-- Tool Call Round-Trip Time (line chart, grouped by tool_name)
-- Audio Bytes Sent / Received (stacked area)
+The dashboard name is configurable via `InstrumentationConfig(dashboard_name="...")`. Default: `"Gemini Live API Metrics"`.
 
-**Row 4 — Duration & Tool Distribution:**
-- Turn Duration Over Time (line chart)
-- Tool Calls by Type (stacked bar, grouped by tool_name)
+### Dashboard Preview
 
-**Filter:** Session ID dropdown to filter all widgets by a specific session.
+**Scorecards** — Avg TTFB, Total Turns, Total Tokens, Interrupted Turns, Active Sessions, Avg Setup Latency:
+
+![Dashboard Scorecards](docs/images/dashboard-scorecards.png)
+
+**Time Series Charts** — TTFB Over Time, Tokens per Turn (Prompt vs Response), Tool Call Round-Trip Time, Audio Bytes (Sent/Received), Turn Duration Over Time, Tool Calls by Type:
+
+![Dashboard Charts](docs/images/dashboard-charts.png)
+
+### Dashboard Widgets
+
+| Widget | Type | Data |
+|---|---|---|
+| Avg TTFB | Scorecard | Time to first byte (500ms yellow, 1000ms red thresholds) |
+| Total Turns | Scorecard | Completed conversation turns |
+| Total Tokens | Scorecard | Prompt + response tokens |
+| Interrupted Turns | Scorecard | Turns interrupted by user |
+| Active Sessions | Scorecard | Currently active Gemini sessions |
+| Avg Setup Latency | Scorecard | WebSocket connect to setup_complete |
+| TTFB Over Time | Line chart | Per-session TTFB trend |
+| Tokens per Turn | Stacked bar | Prompt vs response tokens |
+| Tool Call Round-Trip | Line chart | Per-tool-name round-trip time |
+| Audio Bytes | Stacked area | Sent vs received audio data |
+| Turn Duration | Line chart | Per-session turn duration |
+| Tool Calls by Type | Stacked bar | Per-tool-name call count |
+
+**Filter:** Use the `$session_id` dropdown at the top to filter all widgets by a specific Gemini session.
 
 ### IAM Requirements
 
