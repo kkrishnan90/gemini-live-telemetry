@@ -47,6 +47,7 @@ _config: InstrumentationConfig | None = None
 _store: MetricsStore | None = None
 _app_logger: AppMetricsLogger | None = None
 _json_exp: object | None = None  # JsonFileExporter instance (avoids module name collision)
+_event_bus: object | None = None  # EventBus instance (set by activate())
 
 
 def activate(config: InstrumentationConfig | None = None) -> None:
@@ -65,7 +66,7 @@ def activate(config: InstrumentationConfig | None = None) -> None:
             the instrumentation cannot be applied.
         ConfigurationError: If the config is invalid.
     """
-    global _activated, _config, _store, _app_logger, _json_exp
+    global _activated, _config, _store, _app_logger, _json_exp, _event_bus
 
     if _activated:
         import logging
@@ -127,7 +128,41 @@ def activate(config: InstrumentationConfig | None = None) -> None:
                 "atexit flush will still write the file on shutdown."
             )
 
-    # Register shutdown hook for OTel + JSON
+    # ── Event Sinks (Pub/Sub, custom sinks) ──────────────────────────────
+    import logging as _logging  # ensure logging is available for this section
+
+    from ._event_bus import EventBus
+
+    _event_bus = EventBus(max_queue_size=10_000)
+
+    # Auto-create PubSubSink if enabled
+    if config.enable_pubsub_export and config.project_id:
+        try:
+            from .sinks import PubSubSink
+
+            _ps = PubSubSink(
+                project_id=config.project_id,
+                topic_id=config.pubsub_topic,
+                auto_create_topic=config.pubsub_auto_create_topic,
+                event_filter=config.pubsub_event_filter,
+            )
+            _event_bus.register(_ps)
+            _logging.getLogger(__name__).info(
+                f"PubSubSink registered → {_ps._topic_path}"
+            )
+        except Exception:
+            _logging.getLogger(__name__).warning(
+                "PubSubSink creation failed (non-fatal)", exc_info=True
+            )
+
+    # Register any custom sinks from config
+    for sink in config.event_sinks:
+        _event_bus.register(sink)
+
+    # Start the dispatch loop (requires a running asyncio event loop)
+    _event_bus.start()
+
+    # Register shutdown hook for OTel + JSON + EventBus
     import atexit as _atexit
 
     _atexit.register(_shutdown_hook)
@@ -221,8 +256,13 @@ def get_json_exporter():
     return _json_exp
 
 
+def get_event_bus():
+    """Get the EventBus instance, or None if not activated."""
+    return _event_bus
+
+
 def _shutdown_hook() -> None:
-    """atexit hook — flush OTel and JSON on shutdown."""
+    """atexit hook — flush OTel, JSON, and EventBus on shutdown."""
     import logging
 
     logger = logging.getLogger(__name__)
@@ -238,6 +278,19 @@ def _shutdown_hook() -> None:
             _json_exp.flush_now()
         except Exception:
             pass
+    # Drain EventBus queue and close all sinks
+    if _event_bus is not None:
+        try:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_event_bus.shutdown())
+            except RuntimeError:
+                # No running loop — run synchronously
+                asyncio.run(_event_bus.shutdown())
+        except Exception:
+            logger.debug("EventBus shutdown error (non-fatal)", exc_info=True)
     logger.info("Instrumentation shutdown complete.")
 
 
@@ -260,6 +313,7 @@ __all__ = [
     "activate",
     "get_metrics_store",
     "get_app_logger",
+    "get_event_bus",
     "is_activated",
     "get_config",
     # Config

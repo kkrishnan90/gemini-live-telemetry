@@ -22,6 +22,10 @@ from .models import (
 )
 from . import _instruments as inst
 from ._session_map import SessionMap
+from ._event_types import (
+    TelemetryEvent, SESSION_START, SESSION_END, AUDIO_SENT,
+    TOOL_RESPONSE, CONTENT_SENT,
+)
 
 if TYPE_CHECKING:
     from .store import MetricsStore
@@ -37,6 +41,16 @@ def set_store(store: MetricsStore) -> None:
     """Set the global store reference. Called once from apply_patches()."""
     global _store
     _store = store
+
+
+def _emit(event: TelemetryEvent) -> None:
+    """Emit event to EventBus if available."""
+    try:
+        from . import _event_bus
+        if _event_bus is not None:
+            _event_bus.emit(event)
+    except Exception:
+        pass
 
 
 def get_session_map() -> SessionMap:
@@ -120,6 +134,13 @@ async def wrap_send_realtime_input(wrapped, instance, args, kwargs):
                     # OTel: audio bytes sent
                     if inst.audio_bytes_sent is not None:
                         inst.audio_bytes_sent.add(byte_count, attrs)
+                    # EventSink: audio_sent
+                    _emit(TelemetryEvent(
+                        event_type=AUDIO_SENT,
+                        session_id=session_metrics.session_id,
+                        data={"byte_count": byte_count,
+                              "turn_number": timing.current_turn_number + 1},
+                    ))
 
             # Activity end (custom VAD) — TTFB reference point
             if kwargs.get("activity_end") is not None:
@@ -163,6 +184,14 @@ async def wrap_send_client_content(wrapped, instance, args, kwargs):
                     inst.ATTR_SESSION_ID: session_metrics.session_id,
                     inst.ATTR_METHOD: "send_client_content",
                 })
+            # EventSink: content_sent
+            timing = _session_map.get_timing(instance)
+            _emit(TelemetryEvent(
+                event_type=CONTENT_SENT,
+                session_id=session_metrics.session_id,
+                data={"method": "send_client_content",
+                      "turn_number": (timing.current_turn_number + 1) if timing else None},
+            ))
     except Exception:
         logger.exception("Error in send_client_content wrapper")
 
@@ -234,6 +263,18 @@ async def wrap_send_tool_response(wrapped, instance, args, kwargs):
                                         tc.round_trip_ms,
                                         {**attrs, inst.ATTR_TOOL_NAME: tc.tool_name},
                                     )
+                                # EventSink: tool_response
+                                timing_state = _session_map.get_timing(instance)
+                                _emit(TelemetryEvent(
+                                    event_type=TOOL_RESPONSE,
+                                    session_id=session_metrics.session_id,
+                                    data={
+                                        "tool_name": tc.tool_name,
+                                        "tool_id": tc.tool_id,
+                                        "round_trip_ms": tc.round_trip_ms,
+                                        "turn_number": (timing_state.current_turn_number + 1) if timing_state else None,
+                                    },
+                                ))
                                 logger.debug(
                                     f"Tool {tc.tool_name} round-trip: "
                                     f"{tc.round_trip_ms:.2f}ms"
@@ -282,6 +323,11 @@ def wrap_connect(wrapped, instance, args, kwargs):
                     if inst.sessions_active is not None:
                         inst.sessions_active.add(1)
 
+                    # EventSink: session_start
+                    _emit(TelemetryEvent(
+                        event_type=SESSION_START, session_id=session_id,
+                        data={"setup_latency_ms": setup_elapsed_ms},
+                    ))
                     logger.info(
                         f"Session {session_id} instrumented "
                         f"(setup: {setup_elapsed_ms:.2f}ms)"
@@ -299,6 +345,11 @@ def wrap_connect(wrapped, instance, args, kwargs):
                         sm.end_time = datetime.utcnow()
                         sm.status = SessionStatus.COMPLETED
                         duration = (time.time() - connect_start) * 1000
+                        # EventSink: session_end
+                        _emit(TelemetryEvent(
+                            event_type=SESSION_END, session_id=session_id,
+                            data={"duration_ms": duration},
+                        ))
                         logger.info(
                             f"Session {session_id} ended "
                             f"(duration: {duration:.0f}ms)"

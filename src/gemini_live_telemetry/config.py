@@ -67,6 +67,15 @@ class InstrumentationConfig:
     service_name: str = "gemini-live-api"
     service_instance_id: str = field(default_factory=lambda: _generate_instance_id())
 
+    # ── Event Sinks (Pub/Sub, logging, callbacks) ────────────────────────
+    enable_pubsub_export: bool = False
+    pubsub_topic: str = "gemini-live-telemetry"
+    pubsub_auto_create_topic: bool = True
+    pubsub_event_filter: list[str] | None = None  # None = all events
+
+    # Custom sinks — pass any EventSink instances
+    event_sinks: list = field(default_factory=list)  # list[EventSink]
+
     def __post_init__(self) -> None:
         if self.export_interval_s < MIN_EXPORT_INTERVAL_S:
             raise ValueError(
