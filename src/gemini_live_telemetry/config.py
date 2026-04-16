@@ -70,7 +70,7 @@ class InstrumentationConfig:
     # ── Event Sinks (Pub/Sub, logging, callbacks) ────────────────────────
     enable_pubsub_export: bool = False
     pubsub_topic: str = "gemini-live-telemetry"
-    pubsub_auto_create_topic: bool = True
+    pubsub_auto_create_topic: bool = False
     pubsub_event_filter: list[str] | None = None  # None = all events
 
     # Custom sinks — pass any EventSink instances

@@ -521,9 +521,12 @@ Stream telemetry events to Pub/Sub, webhooks, or custom sinks in real-time.
 ```python
 activate(InstrumentationConfig(
     enable_pubsub_export=True,
-    pubsub_topic="gemini-live-telemetry",
+    pubsub_topic="gemini-live-telemetry",  # must be pre-created
 ))
 ```
+
+> **Note:** The Pub/Sub topic must already exist. Create it with
+> `gcloud pubsub topics create gemini-live-telemetry` before calling `activate()`.
 
 ## Requirements
 

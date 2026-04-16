@@ -37,6 +37,11 @@ activate(InstrumentationConfig(
 ))
 ```
 
+> **Important:** The Pub/Sub topic must already exist before calling `activate()`.
+> Create it with `gcloud pubsub topics create gemini-live-telemetry` or via the
+> Cloud Console. Set `pubsub_auto_create_topic=True` to have the library create
+> it automatically (requires `roles/pubsub.editor`).
+
 All 18 event types are now streamed to Pub/Sub.
 
 > **Note:** Currently only the `PubSubSink` is implemented. Logging, webhook,
@@ -98,11 +103,16 @@ All 18 event types are now streamed to Pub/Sub.
 ```python
 activate(InstrumentationConfig(
     enable_pubsub_export=True,
-    pubsub_topic="my-telemetry-topic",
-    pubsub_auto_create_topic=True,
-    pubsub_event_filter=[...],    # optional: list of event types to publish
+    pubsub_topic="my-telemetry-topic",       # must be pre-created
+    pubsub_auto_create_topic=False,          # default; set True to auto-create
+    pubsub_event_filter=[...],               # optional: list of event types to publish
 ))
 ```
+
+> **Topic must exist.** By default the library publishes to a pre-existing Pub/Sub
+> topic and will raise an error if the topic is not found. Set
+> `pubsub_auto_create_topic=True` to create it on the fly (requires
+> `roles/pubsub.editor` on the service account).
 
 ### `pubsub_event_filter`
 
