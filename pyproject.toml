@@ -39,6 +39,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+pubsub = [
+    "google-cloud-pubsub>=2.18.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",

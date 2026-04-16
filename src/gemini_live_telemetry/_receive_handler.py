@@ -23,8 +23,24 @@ from .models import (
 )
 from . import _instruments as inst
 from ._session_map import SessionTimingState
+from ._event_types import (
+    TelemetryEvent, TURN_COMPLETE, TTFB, TOOL_CALL, TOOL_CANCELLATION,
+    INTERRUPTION, GO_AWAY, VAD_SIGNAL, GROUNDING, SESSION_RESUMPTION,
+    AUDIO_RECEIVED, USAGE_UPDATE, GENERATION_COMPLETE, VOICE_ACTIVITY,
+    SEVERITY_WARNING,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _emit(event: TelemetryEvent) -> None:
+    """Emit event to EventBus if available."""
+    try:
+        from . import _event_bus
+        if _event_bus is not None:
+            _event_bus.emit(event)
+    except Exception:
+        pass
 
 # OTel attribute helpers
 def _sid_attrs(session_metrics: SessionMetrics) -> dict:
@@ -50,6 +66,19 @@ def process_server_message(
     # OTel: messages received
     if inst.messages_received is not None:
         inst.messages_received.add(1, attrs)
+
+    # EventSink: usage_update (per-message token metadata — emitted for every server message)
+    um = getattr(message, "usage_metadata", None)
+    if um is not None:
+        _emit(TelemetryEvent(
+            event_type=USAGE_UPDATE, session_id=session_metrics.session_id,
+            data={
+                "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                "response_tokens": getattr(um, "response_token_count", 0) or 0,
+                "total_tokens": getattr(um, "total_token_count", 0) or 0,
+                "turn_number": timing.current_turn_number + 1,
+            },
+        ))
 
     # 1. Usage metadata (token counts)
     _handle_usage_metadata(message, timing)
@@ -77,19 +106,32 @@ def process_server_message(
     # 6. Voice activity (native VAD)
     va = getattr(message, "voice_activity", None)
     if va is not None:
-        _handle_voice_activity(va, session_metrics, now)
+        _handle_voice_activity(va, session_metrics, timing, now)
 
     # 7. Go-away
     go_away = getattr(message, "go_away", None)
     if go_away is not None:
         time_left = getattr(go_away, "time_left", None)
         logger.warning(f"Go-away received. Time left: {time_left}")
+        _emit(TelemetryEvent(
+            event_type=GO_AWAY,
+            session_id=session_metrics.session_id,
+            severity=SEVERITY_WARNING,
+            data={"time_left": str(time_left),
+                  "turn_number": timing.current_turn_number + 1},
+        ))
 
     # 8. Session resumption update
     sru = getattr(message, "session_resumption_update", None)
     if sru is not None:
         resumable = getattr(sru, "resumable", None)
         logger.debug(f"Session resumption update: resumable={resumable}")
+        _emit(TelemetryEvent(
+            event_type=SESSION_RESUMPTION,
+            session_id=session_metrics.session_id,
+            data={"resumable": resumable,
+                  "turn_number": timing.current_turn_number + 1},
+        ))
 
 
 def _handle_usage_metadata(message: object, timing: SessionTimingState) -> None:
@@ -161,6 +203,15 @@ def _handle_server_content(
                         **_sid_attrs(session_metrics),
                         inst.ATTR_VAD_MODE: vad_mode,
                     })
+                # EventSink: TTFB
+                _emit(TelemetryEvent(
+                    event_type=TTFB, session_id=session_metrics.session_id,
+                    data={
+                        "ttfb_ms": ttfb_ms,
+                        "vad_mode": "custom" if timing.last_activity_end_time else "native",
+                        "turn_number": timing.current_turn_number + 1,  # upcoming turn
+                    },
+                ))
                 logger.debug(f"TTFB: {ttfb_ms:.2f}ms")
 
         # Count audio bytes received
@@ -174,6 +225,13 @@ def _handle_server_content(
                     # OTel: audio bytes received
                     if inst.audio_bytes_received is not None:
                         inst.audio_bytes_received.add(byte_count, _sid_attrs(session_metrics))
+                    # EventSink: audio_received
+                    _emit(TelemetryEvent(
+                        event_type=AUDIO_RECEIVED,
+                        session_id=session_metrics.session_id,
+                        data={"byte_count": byte_count,
+                              "turn_number": timing.current_turn_number + 1},
+                    ))
 
     # Grounding metadata
     gm = getattr(sc, "grounding_metadata", None)
@@ -202,6 +260,9 @@ def _handle_server_content(
         # OTel: grounding invocation
         if inst.grounding_invocations is not None:
             inst.grounding_invocations.add(1, _sid_attrs(session_metrics))
+        _emit(TelemetryEvent(event_type=GROUNDING, session_id=session_metrics.session_id,
+                             data={"chunk_count": len(chunks), "queries": list(queries),
+                                   "turn_number": timing.current_turn_number + 1}))
 
     # Turn complete
     if getattr(sc, "turn_complete", False):
@@ -214,6 +275,10 @@ def _handle_server_content(
     if getattr(sc, "generation_complete", False):
         if session_metrics.turns:
             session_metrics.turns[-1].generation_complete = True
+        _emit(TelemetryEvent(
+            event_type=GENERATION_COMPLETE, session_id=session_metrics.session_id,
+            data={"turn_number": timing.current_turn_number},
+        ))
 
     # Interrupted
     if getattr(sc, "interrupted", False):
@@ -228,7 +293,6 @@ def _finalize_turn(
     was_interrupted: bool,
 ) -> None:
     """Record completed turn metrics and reset timing state."""
-    timing.current_turn_number += 1
     turn_start = timing.turn_first_content_time
     duration_ms = (now - turn_start) * 1000 if turn_start is not None else None
 
@@ -240,7 +304,7 @@ def _finalize_turn(
     )
 
     turn = TurnMetrics(
-        turn_number=timing.current_turn_number,
+        turn_number=timing.current_turn_number + 1,
         start_time=datetime.utcfromtimestamp(turn_start) if turn_start else None,
         end_time=datetime.utcnow(),
         duration_ms=duration_ms,
@@ -286,6 +350,29 @@ def _finalize_turn(
         if usage.thoughts_token_count and inst.tokens_thoughts is not None:
             inst.tokens_thoughts.add(usage.thoughts_token_count, attrs)
 
+    # Compute inter-turn gap for event data
+    _inter_turn_gap_ms = None
+    if timing.last_turn_complete_time is not None:
+        _gap = (now - timing.last_turn_complete_time) * 1000
+        if _gap > 0:
+            _inter_turn_gap_ms = _gap
+
+    # Increment turn number AFTER building turn metrics (so turn_number matches mid-turn events)
+    timing.current_turn_number += 1
+
+    # EventSink: turn_complete or interruption
+    _evt_data = {"turn_number": turn.turn_number, "duration_ms": duration_ms,
+                 "ttfb_ms": turn_ttfb, "was_interrupted": was_interrupted,
+                 "inter_turn_gap_ms": _inter_turn_gap_ms}
+    if usage: _evt_data.update({"prompt_tokens": usage.prompt_token_count,
+                                "response_tokens": usage.response_token_count,
+                                "total_tokens": usage.total_token_count,
+                                "cached_tokens": usage.cached_content_token_count,
+                                "tool_use_tokens": usage.tool_use_prompt_token_count,
+                                "thoughts_tokens": usage.thoughts_token_count})
+    _emit(TelemetryEvent(event_type=INTERRUPTION if was_interrupted else TURN_COMPLETE,
+                         session_id=session_metrics.session_id, data=_evt_data))
+
     # Inter-turn gap tracking
     timing.last_turn_complete_time = now
 
@@ -320,6 +407,9 @@ def _handle_tool_call(
                 **_sid_attrs(session_metrics),
                 inst.ATTR_TOOL_NAME: tool_name,
             })
+        _emit(TelemetryEvent(event_type=TOOL_CALL, session_id=session_metrics.session_id,
+                             data={"tool_name": tool_name, "tool_id": tool_id,
+                                   "turn_number": timing.current_turn_number + 1}))
         logger.debug(f"Tool call: {tool_name} (id={tool_id})")
 
 
@@ -333,6 +423,9 @@ def _handle_tool_cancellation(tc: object, session_metrics: SessionMetrics) -> No
                 # OTel: cancellation counter
                 if inst.tool_calls_cancellations is not None:
                     inst.tool_calls_cancellations.add(1, _sid_attrs(session_metrics))
+                _emit(TelemetryEvent(event_type=TOOL_CANCELLATION, session_id=session_metrics.session_id,
+                                     data={"tool_id": cancel_id, "tool_name": tc_metric.tool_name,
+                                           "turn_number": timing.current_turn_number + 1 if hasattr(timing, 'current_turn_number') else None}))
                 logger.debug(f"Tool call cancelled: {cancel_id}")
                 break
 
@@ -356,16 +449,27 @@ def _handle_vad_signal(
             event_type=VADEventType.VAD_EOS,
             source=VADMode.NATIVE,
         ))
+        _emit(TelemetryEvent(
+            event_type=VAD_SIGNAL, session_id=session_metrics.session_id,
+            data={"signal": "EOS", "source": "native",
+                  "turn_number": timing.current_turn_number + 1},
+        ))
     elif "SOS" in signal_str:
         session_metrics.vad_events.append(VADEvent(
             event_type=VADEventType.VAD_SOS,
             source=VADMode.NATIVE,
+        ))
+        _emit(TelemetryEvent(
+            event_type=VAD_SIGNAL, session_id=session_metrics.session_id,
+            data={"signal": "SOS", "source": "native",
+                  "turn_number": timing.current_turn_number + 1},
         ))
 
 
 def _handle_voice_activity(
     va: object,
     session_metrics: SessionMetrics,
+    timing: SessionTimingState,
     now: float,
 ) -> None:
     """Handle native voice activity start/end signals."""
@@ -379,8 +483,18 @@ def _handle_voice_activity(
             event_type=VADEventType.ACTIVITY_START_SERVER,
             source=VADMode.NATIVE,
         ))
+        _emit(TelemetryEvent(
+            event_type=VOICE_ACTIVITY, session_id=session_metrics.session_id,
+            data={"activity": "START", "source": "native",
+                  "turn_number": timing.current_turn_number + 1},
+        ))
     elif "END" in type_str:
         session_metrics.vad_events.append(VADEvent(
             event_type=VADEventType.ACTIVITY_END_SERVER,
             source=VADMode.NATIVE,
+        ))
+        _emit(TelemetryEvent(
+            event_type=VOICE_ACTIVITY, session_id=session_metrics.session_id,
+            data={"activity": "END", "source": "native",
+                  "turn_number": timing.current_turn_number + 1},
         ))

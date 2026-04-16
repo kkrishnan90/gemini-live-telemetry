@@ -513,6 +513,21 @@ llm = GeminiLiveVertexLLMService(
 # Works identically — same SDK methods, same telemetry
 ```
 
+## Event Sinks — Real-Time Streaming
+
+Stream telemetry events to Pub/Sub, webhooks, or custom sinks in real-time.
+18 event types with `turn_number` correlation. See **[docs/event-sinks.md](docs/event-sinks.md)**.
+
+```python
+activate(InstrumentationConfig(
+    enable_pubsub_export=True,
+    pubsub_topic="gemini-live-telemetry",  # must be pre-created
+))
+```
+
+> **Note:** The Pub/Sub topic must already exist. Create it with
+> `gcloud pubsub topics create gemini-live-telemetry` before calling `activate()`.
+
 ## Requirements
 
 - Python >= 3.10
